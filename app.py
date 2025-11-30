@@ -1,13 +1,15 @@
 import gradio as gr
 import os
 import gdown
-import tensorflow as tf  # assuming your model is Keras .h5
+import tensorflow as tf
 from tensorflow.keras.models import load_model
+from PIL import Image
+import numpy as np
+import json
 
-# ----- Step 1: Download the model -----
+# ----- Step 1: Download model if not exists -----
 FILE_ID = "1DWY7nBMUiVttXNz0kdL83QyQKhGn1DTv"
 url = f"https://drive.google.com/uc?id={FILE_ID}&confirm=t"
-
 MODEL_FILE = "plant_disease_model.h5"
 
 if not os.path.exists(MODEL_FILE):
@@ -21,26 +23,55 @@ else:
 model = load_model(MODEL_FILE)
 print("Model loaded successfully.")
 
-# ----- Step 3: Define prediction function -----
-def predict(image):  # assuming your model takes an image
-    # Preprocess the image as you did in your training script
-    image = image.resize((224, 224))  # example, adjust as needed
-    img_array = tf.keras.preprocessing.image.img_to_array(image)
-    img_array = tf.expand_dims(img_array, 0)  # batch dimension
+# ----- Step 3: Load label map -----
+if os.path.exists("label_map.json"):
+    with open("label_map.json", "r") as f:
+        label_map = json.load(f)
+    class_names = [label_map[str(i)] for i in range(len(label_map))]
+else:
+    # fallback if you don't have label_map.json
+    class_names = [
+        "Tomato Early Blight",
+        "Potato Late Blight",
+        "Pepper Bacterial Spot",
+        "Healthy"
+        # add all your classes here
+    ]
 
-    predictions = model.predict(img_array)
-    class_idx = predictions.argmax(axis=1)[0]
+# ----- Step 4: Disease solutions mapping -----
+disease_solutions = {
+    "Tomato Early Blight": "Remove infected leaves. Apply a copper-based fungicide weekly.",
+    "Potato Late Blight": "Destroy infected plants. Use Mancozeb or Chlorothalonil spray.",
+    "Pepper Bacterial Spot": "Use certified seeds. Apply streptomycin spray weekly.",
+    "Healthy": "Your plant appears healthy!"
+    # add other diseases and solutions as needed
+}
 
-    # Map class_idx to your class names
-    class_names = ["Apple Scab", "Apple Black Rot", "Healthy", ...]  # replace with your classes
-    return class_names[class_idx]
+# ----- Step 5: Preprocess function -----
+def preprocess_image(image):
+    img = image.convert("RGB")
+    img = img.resize((224, 224))  # match your model input
+    img_array = np.array(img) / 255.0
+    return np.expand_dims(img_array, axis=0)
 
-# ----- Step 4: Setup Gradio interface -----
+# ----- Step 6: Prediction function -----
+def predict(image):
+    img = preprocess_image(image)
+    preds = model.predict(img)
+    index = np.argmax(preds[0])
+    confidence = float(np.max(preds[0]))
+    label = class_names[index]
+    solution = disease_solutions.get(label, "No solution available. Please consult an expert.")
+    
+    return f"{label} ({confidence*100:.2f}% confidence)\nSolution: {solution}"
+
+# ----- Step 7: Gradio Interface -----
 iface = gr.Interface(
     fn=predict,
-    inputs=gr.Image(type="pil"),   # take PIL image
-    outputs=gr.Textbox(label="Predicted Disease"),
-    live=False
+    inputs=gr.Image(type="pil"),
+    outputs=gr.Textbox(label="Prediction & Solution"),
+    title="Plant Disease Detector",
+    description="Upload an image of a leaf and get the disease prediction and solution."
 )
 
 iface.launch(server_name="0.0.0.0", server_port=7860)
